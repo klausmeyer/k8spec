@@ -95,6 +95,7 @@ RSpec.configure do |config|
   # as the one that triggered the failure.
   Kernel.srand config.seed
 =end
+  config.filter_run_when_matching :focus
 end
 
 require 'debug'
@@ -108,6 +109,22 @@ $k8s = K8s::Client.config(
     File.expand_path '~/.kube/config'
   )
 )
+
+$deployments_in_namespace = Hash.new do |hash, key|
+  hash[key] = $k8s.api('apps/v1').resource('deployments', namespace: key).list
+end
+
+$statefulsets_in_namespace = Hash.new do |hash, key|
+  hash[key] = $k8s.api('apps/v1').resource('statefulsets', namespace: key).list
+end
+
+$replicasets_in_namespace = Hash.new do |hash, key|
+  hash[key] = $k8s.api('apps/v1').resource('replicasets', namespace: key).list
+end
+
+$pods_in_namespace = Hash.new do |hash, key|
+  hash[key] = $k8s.api('v1').resource('pods', namespace: key).list
+end
 
 Node = Struct.new(:name) do
   def exists?
@@ -123,16 +140,16 @@ end
 
 Deployment = Struct.new(:namespace, :name) do
   def exists?
-    $k8s.api('apps/v1').resource('deployments', namespace: namespace).list.any? { |deployment| deployment.metadata[:name] == name}
+    $deployments_in_namespace[namespace].any? { |deployment| deployment.metadata[:name] == name}
   end
 
   def has_pods?(pods_spec = [])
-    replicasets = $k8s.api('apps/v1').resource('replicasets', namespace: namespace).list.filter do |rs|
+    replicasets = $replicasets_in_namespace[namespace].filter do |rs|
       rs.metadata.dig(:ownerReferences, 0, :kind) == 'Deployment' &&
       rs.metadata.dig(:ownerReferences, 0, :name) == name
     end
 
-    pods = $k8s.api('v1').resource('pods', namespace: namespace).list.filter do |pod|
+    pods = $pods_in_namespace[namespace].filter do |pod|
       pod.metadata.dig(:ownerReferences, 0, :kind) == 'ReplicaSet' &&
       replicasets.map { |p| p.metadata[:uid] }.include?(pod.metadata.dig(:ownerReferences, 0, :uid))
     end
@@ -144,11 +161,11 @@ end
 
 Statefulset = Struct.new(:namespace, :name) do
   def exists?
-    $k8s.api('apps/v1').resource('statefulsets', namespace: namespace).list.any? { |sfs| sfs.metadata[:name] == name}
+    $statefulsets_in_namespace[namespace].any? { |sfs| sfs.metadata[:name] == name}
   end
 
   def has_pods?(pods_spec = [])
-    pods = $k8s.api('v1').resource('pods', namespace: namespace).list.filter do |pod|
+    pods = $pods_in_namespace[namespace].filter do |pod|
       pod.metadata.dig(:ownerReferences, 0, :kind) == 'StatefulSet' &&
       pod.metadata.dig(:ownerReferences, 0, :name) == name
     end
